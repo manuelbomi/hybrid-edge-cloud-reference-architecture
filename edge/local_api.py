@@ -32,6 +32,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from edge.forwarder import Forwarder
@@ -152,6 +153,19 @@ def create_app(forwarder: Forwarder, *, run_background_loop: bool = False, enabl
     app = FastAPI(title="Edge Local API", lifespan=lifespan)
     app.state.forwarder = forwarder
 
+    # Permissive read-only CORS so the frontend/ dashboard (served from its
+    # own origin/port, e.g. via `npm run dev`/`vite preview` or the
+    # `dashboard-ui` container) can poll GET /queue/stats from a browser.
+    # This does not change POST /events (edge devices/scripts call that
+    # server-to-server, not from a browser) or any store-and-forward
+    # behavior -- it only adds response headers for cross-origin GETs.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
+
     @app.post("/events", status_code=202)
     def post_event(event: EventIn) -> dict:
         payload = event.model_dump()
@@ -163,6 +177,25 @@ def create_app(forwarder: Forwarder, *, run_background_loop: bool = False, enabl
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok", "queue_counts": forwarder.counts()}
+
+    @app.get("/queue/stats")
+    def queue_stats() -> dict:
+        """Read-only view of the store-and-forward queue's status breakdown.
+
+        Reuses ``Forwarder.counts()`` (the same data ``/health`` embeds
+        under ``queue_counts``) but always reports ``pending``,
+        ``delivered``, and ``failed`` explicitly (as 0 when there are
+        currently no events in that status), which is easier for a
+        dashboard to render without special-casing missing keys. This is
+        purely additive and read-only -- it does not change any
+        store-and-forward behavior.
+        """
+        counts = forwarder.counts()
+        return {
+            "pending": counts.get("pending", 0),
+            "delivered": counts.get("delivered", 0),
+            "failed": counts.get("failed", 0),
+        }
 
     return app
 

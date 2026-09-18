@@ -4,6 +4,11 @@
 #   ingest-api  - minimal ingestion endpoint (POST /ingest), stores accepted
 #                 events in SQLite (a stand-in for a managed database)
 #   dashboard   - tiny read-only page listing recently ingested events
+#   dashboard-ui - React+TypeScript dashboard (frontend/), same data as
+#                 `dashboard` above (recent events) plus a live view of the
+#                 edge site's store-and-forward queue via
+#                 edge/local_api.py's GET /queue/stats. Served on 8091 so it
+#                 does not collide with `dashboard` on 8090.
 #
 # In a real deployment this stack would sit behind a load balancer / API
 # gateway with TLS termination, and the SQLite file would be a managed
@@ -43,6 +48,23 @@ services:
       - "8090:8090"
     environment:
       INGEST_API_URL: http://ingest-api:8080
+    depends_on:
+      - ingest-api
+    networks:
+      - hybrid_net
+
+  dashboard-ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Built into the static JS bundle -- these run in the browser, so
+        # they must be the host-published ports (see README.md), not
+        # in-network service names.
+        VITE_INGEST_API_URL: http://localhost:8080
+        VITE_EDGE_API_URL: http://localhost:8000
+    ports:
+      - "8091:80"
     depends_on:
       - ingest-api
     networks:

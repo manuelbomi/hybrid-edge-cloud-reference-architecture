@@ -26,3 +26,8 @@ infra/terraform/crash.log
 .DS_Store
 .vscode/
 .idea/
+
+# Frontend (frontend/ -- Vite React-TS dashboard)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/

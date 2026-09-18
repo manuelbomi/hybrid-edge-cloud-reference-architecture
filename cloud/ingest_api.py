@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 
@@ -81,6 +82,19 @@ def create_app(db_path: str) -> FastAPI:
     init_db(db_path)
     app = FastAPI(title="Cloud Ingest API")
     app.state.db_path = db_path
+
+    # Permissive read-only CORS so a browser-based dashboard (frontend/,
+    # served from its own origin/port) can poll GET /events. POST /ingest
+    # is called server-to-server by edge Forwarders, not from a browser,
+    # so it is intentionally left out of allow_methods -- this only adds
+    # response headers for cross-origin GETs and does not change
+    # ingestion behavior at all.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
 
     @app.post("/ingest", status_code=201)
     def ingest(event: IngestEvent) -> dict:

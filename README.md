@@ -137,6 +137,7 @@ docker compose -f docker-compose.cloud.yml up -d --build
 This starts:
 - `ingest-api` on `http://localhost:8080` (`POST /ingest`, `GET /events`, `GET /health`)
 - `dashboard` on `http://localhost:8090` (a plain HTML page listing recent events)
+- `dashboard-ui` on `http://localhost:8091` (the React+TypeScript dashboard -- see [Dashboard](#dashboard) below)
 
 Check it's alive:
 
@@ -153,7 +154,7 @@ docker compose -f docker-compose.edge.yml up -d --build
 This starts:
 - `mosquitto` -- the local MQTT broker (internal to the compose network only)
 - `mock-camera-generator` -- publishes fake camera events to MQTT every few seconds
-- `local-api` on `http://localhost:8000` (`POST /events`, `GET /health`) -- also bridges MQTT messages into the queue
+- `local-api` on `http://localhost:8000` (`POST /events`, `GET /health`, `GET /queue/stats`) -- also bridges MQTT messages into the queue
 - `forwarder` -- delivers whatever's queued to the cloud's `ingest-api`, using `CLOUD_INGEST_URL=http://ingest-api:8080/ingest` (resolvable because both stacks share `hybrid_net`)
 
 ### 4. Watch events flow end to end
@@ -196,13 +197,45 @@ docker compose -f docker-compose.cloud.yml down -v
 docker network rm hybrid_net
 ```
 
+## Dashboard
+
+![Hybrid Edge/Cloud Dashboard, showing recently ingested events and the edge store-and-forward queue's pending/delivered/failed counts](docs/screenshots/edge-cloud-dashboard.png)
+
+`frontend/` is a React + TypeScript dashboard that replaces `cloud/dashboard.py`'s
+plain HTML page as the human-facing view of the system (`cloud/dashboard.py`
+is left running unchanged, in case you want the simplest possible reference
+implementation of the same idea). It shows two things side by side: a table
+of recently ingested events from the cloud (`GET /events` on
+`cloud/ingest_api.py`), and a live pending/delivered/failed breakdown of the
+edge site's local store-and-forward queue (`GET /queue/stats`, a new
+additive endpoint on `edge/local_api.py` that summarizes
+`edge/forwarder.py`'s SQLite queue). The screenshot above was taken mid-demo:
+4 events had already made it through to the cloud, while the forwarder was
+stopped to simulate a WAN outage (see "Simulate an outage" above) and 3 more
+events queued up locally, pending, waiting for the link to come back -- the
+whole point of this repo, visible in one page.
+
+To run it locally against the stacks above:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env   # defaults already point at localhost:8080 / localhost:8000
+npm run dev             # http://localhost:5173, hot-reloading
+# or: npm run build && npx serve dist
+```
+
+Or via Docker, as the `dashboard-ui` service in `docker-compose.cloud.yml`
+(started automatically by `docker compose -f docker-compose.cloud.yml up -d
+--build`), on `http://localhost:8091`.
+
 ## Project structure
 
 ```
 .
 ├── edge/
 │   ├── forwarder.py            # store-and-forward queue + delivery loop (the centerpiece)
-│   ├── local_api.py             # POST /events, MQTT bridge into the queue
+│   ├── local_api.py             # POST /events, GET /queue/stats, MQTT bridge into the queue
 │   ├── mock_camera_generator.py # simulates a small camera fleet over MQTT
 │   ├── mosquitto.conf            # minimal local broker config for the demo
 │   └── __init__.py
@@ -210,6 +243,12 @@ docker network rm hybrid_net
 │   ├── ingest_api.py             # POST /ingest, GET /events -- cloud-side ingestion
 │   ├── dashboard.py              # tiny HTML page listing recent events
 │   └── __init__.py
+├── frontend/                     # React + TypeScript dashboard (see "Dashboard" above)
+│   ├── src/
+│   │   ├── App.tsx               # events table + edge queue panel
+│   │   ├── types.ts              # IngestedEvent / QueueStats interfaces
+│   │   └── api.ts                # fetch wrappers for /events and /queue/stats
+│   └── Dockerfile                # multi-stage: node build -> nginx serve
 ├── infra/terraform/              # illustrative cloud IaC (ALB + ECS/Fargate + RDS)
 │   ├── main.tf
 │   ├── variables.tf
@@ -217,6 +256,8 @@ docker network rm hybrid_net
 │   └── versions.tf
 ├── docs/
 │   ├── decision-framework.md     # edge vs. cloud inference checklist + flowchart
+│   ├── screenshots/
+│   │   └── edge-cloud-dashboard.png
 │   └── architecture-decision-records/
 │       ├── ADR-001-store-and-forward-for-intermittent-wan.md
 │       ├── ADR-002-mqtt-at-edge-https-to-cloud.md
@@ -246,7 +287,9 @@ pip install -r requirements.txt
 pytest -v
 ```
 
-All 15 tests pass. The suite in `tests/test_forwarder.py` is the one worth
+All 17 tests pass (15 from the original suite, plus 2 covering the new
+`GET /queue/stats` endpoint in `tests/test_local_api.py`). The suite in
+`tests/test_forwarder.py` is the one worth
 reading closely -- it exercises the store-and-forward logic directly against
 a real temp-file SQLite database, with the network call swapped for an
 `httpx.MockTransport` that can be flipped "up"/"down" mid-test, and a fake,
@@ -271,6 +314,16 @@ Lint with:
 
 ```bash
 ruff check .
+```
+
+The `frontend/` dashboard has its own checks (also run in CI, as a separate
+`frontend` job):
+
+```bash
+cd frontend
+npm ci
+npx tsc --noEmit
+npm run build
 ```
 
 ## Limitations & production hardening notes
@@ -308,6 +361,10 @@ add:
   latency/failure rate, and alerting on a queue that's growing without
   draining would all be necessary to operate this for real -- right now the
   forwarder only logs to stdout.
+- **Locked-down CORS.** `GET /events` and `GET /queue/stats` allow any
+  origin (`allow_origins=["*"]`), which is what lets the `frontend/`
+  dashboard be served from a different port/origin in this demo. A real
+  deployment should restrict this to the dashboard's actual origin(s).
 
 ## License
 

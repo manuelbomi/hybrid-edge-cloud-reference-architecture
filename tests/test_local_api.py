@@ -54,3 +54,23 @@ def test_health_reports_queue_counts(tmp_path):
     body = response.json()
     assert body["status"] == "ok"
     assert body["queue_counts"] == {"pending": 1}
+
+
+def test_queue_stats_defaults_all_statuses_to_zero(tmp_path):
+    client = make_client(tmp_path)
+
+    response = client.get("/queue/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {"pending": 0, "delivered": 0, "failed": 0}
+
+
+def test_queue_stats_reports_pending_events(tmp_path):
+    client = make_client(tmp_path)
+    client.post("/events", json={"source": "camera-01", "event_type": "motion_detected"})
+    client.post("/events", json={"source": "camera-02", "event_type": "person_detected"})
+
+    response = client.get("/queue/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {"pending": 2, "delivered": 0, "failed": 0}
