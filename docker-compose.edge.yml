@@ -1,0 +1,89 @@
+# Edge-site stack for the hybrid edge/cloud reference architecture.
+#
+# Services:
+#   mosquitto              - local MQTT broker cameras/sensors publish to
+#   mock-camera-generator  - simulates a handful of AI cameras publishing events
+#   local-api               - HTTP front door (POST /events) + MQTT bridge;
+#                              writes into the shared SQLite store-and-forward queue
+#   forwarder                - background loop that delivers queued events to the
+#                              cloud ingestion API, with retry/backoff and TTL purge
+#
+# To point this stack at a cloud stack started from docker-compose.cloud.yml on
+# the same machine, create a shared external network once:
+#   docker network create hybrid_net
+# then start the cloud stack first (so `ingest-api` exists), then this one.
+# See README.md "Setup & run instructions" for the full walkthrough.
+
+networks:
+  hybrid_net:
+    external: true
+
+volumes:
+  edge_queue_data:
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    # Only reachable from other containers on hybrid_net by default (no host
+    # port published, to avoid colliding with any other MQTT broker already
+    # running on your machine's port 1883). Uncomment the block below if you
+    # want to publish a fake camera event from your host machine directly:
+    # ports:
+    #   - "1883:1883"
+    volumes:
+      - ./edge/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - hybrid_net
+
+  mock-camera-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.edge
+    command: ["python", "-m", "edge.mock_camera_generator"]
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_TOPIC: cameras/events
+      MOCK_CAMERA_COUNT: "3"
+      MOCK_EVENT_INTERVAL_SECONDS: "5"
+    depends_on:
+      - mosquitto
+    networks:
+      - hybrid_net
+
+  local-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.edge
+    ports:
+      - "8000:8000"
+    environment:
+      FORWARDER_DB_PATH: /data/edge_queue.db
+      CLOUD_INGEST_URL: http://ingest-api:8080/ingest
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_TOPIC: cameras/events
+      RUN_FORWARDER_LOOP: "false"
+    volumes:
+      - edge_queue_data:/data
+    depends_on:
+      - mosquitto
+    networks:
+      - hybrid_net
+
+  forwarder:
+    build:
+      context: .
+      dockerfile: Dockerfile.edge
+    command: ["python", "-m", "edge.forwarder"]
+    environment:
+      FORWARDER_DB_PATH: /data/edge_queue.db
+      CLOUD_INGEST_URL: http://ingest-api:8080/ingest
+      BASE_BACKOFF_SECONDS: "1.0"
+      MAX_BACKOFF_SECONDS: "60.0"
+      TTL_SECONDS: "86400"
+      POLL_INTERVAL_SECONDS: "5.0"
+    volumes:
+      - edge_queue_data:/data
+    depends_on:
+      - local-api
+    networks:
+      - hybrid_net

@@ -1,0 +1,49 @@
+# Cloud-side stack for the hybrid edge/cloud reference architecture.
+#
+# Services:
+#   ingest-api  - minimal ingestion endpoint (POST /ingest), stores accepted
+#                 events in SQLite (a stand-in for a managed database)
+#   dashboard   - tiny read-only page listing recently ingested events
+#
+# In a real deployment this stack would sit behind a load balancer / API
+# gateway with TLS termination, and the SQLite file would be a managed
+# database -- see infra/terraform/ for an illustrative example of that
+# layer. For the local demo, create the shared network once:
+#   docker network create hybrid_net
+# then start this stack before the edge stack, so that `ingest-api` is a
+# resolvable hostname by the time the edge forwarder looks for it.
+
+networks:
+  hybrid_net:
+    external: true
+
+volumes:
+  cloud_ingest_data:
+
+services:
+  ingest-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+    ports:
+      - "8080:8080"
+    environment:
+      INGEST_DB_PATH: /data/cloud_ingest.db
+    volumes:
+      - cloud_ingest_data:/data
+    networks:
+      - hybrid_net
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+    command: ["uvicorn", "cloud.dashboard:app", "--host", "0.0.0.0", "--port", "8090"]
+    ports:
+      - "8090:8090"
+    environment:
+      INGEST_API_URL: http://ingest-api:8080
+    depends_on:
+      - ingest-api
+    networks:
+      - hybrid_net

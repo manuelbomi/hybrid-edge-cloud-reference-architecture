@@ -1,0 +1,17 @@
+# Edge-site image: local API + MQTT bridge + forwarder + mock camera generator.
+# Which process runs is chosen by the `command:` in docker-compose.edge.yml,
+# so this single image serves all of the edge-side services.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY edge/ ./edge/
+
+ENV PYTHONPATH=/app
+EXPOSE 8000
+
+CMD ["uvicorn", "edge.local_api:app", "--host", "0.0.0.0", "--port", "8000"]

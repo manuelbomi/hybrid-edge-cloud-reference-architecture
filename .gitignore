@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# SQLite data files created at runtime by the edge/cloud services
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/*.tfplan
+infra/terraform/crash.log
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
